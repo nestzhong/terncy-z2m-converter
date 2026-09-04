@@ -30,6 +30,22 @@ zigbee2mqtt/terncy-vg01.mjs
   Zigbee2MQTT external converter for the TERNCY-VG01 VRV air conditioner
   gateway (report-only, see docs/protocol-comparison.md section 6).
 
+zigbee2mqtt/terncy-dim001.mjs / terncy-dim003.mjs / terncy-dl002.mjs /
+terncy-lb001.mjs / terncy-mt001.mjs
+  Zigbee2MQTT external converters for the DIM001/DIM003/DL002/LB001/MT001
+  tunable white (CCT) lights.
+
+zigbee2mqtt/terncy-st01-cv.mjs
+  Zigbee2MQTT external converter for the TERNCY-ST01-CV RGB+CCT LED strip
+  controller.
+
+zigbee2mqtt/terncy-cm01.mjs / terncy-cm07.mjs / terncy-rm02.mjs
+  Zigbee2MQTT external converters for the TERNCY-CM01/CM07 curtain motors
+  and the TERNCY-RM02 roller blind controller.
+
+zigbee2mqtt/terncy-sl02.mjs
+  Zigbee2MQTT external converter for the TERNCY-SL02 door lock.
+
 homeassistant/blueprints/automation/terncy/ws07_d3_action_events.yaml
   Main Home Assistant blueprint for 1-7 clicks and long press automation.
 
@@ -45,6 +61,15 @@ docs/
 
 ## Verification Status
 
+> **WARNING:** Only `terncy-ws07-d3.mjs` and `terncy-sp01.mjs` have been
+> verified on physical devices. Every other converter in this repository is
+> derived from gateway firmware reverse engineering (node-struct, disassembly,
+> and App cross-validation) and has **NOT** been tested on real hardware.
+> They may not work, or could misbehave (for example, inverted curtain
+> positions or unconfirmed payload byte order). **Use them at your own
+> risk**, and please report your findings so they can be corrected and marked
+> as verified.
+
 - `terncy-ws07-d3.mjs` and `terncy-sp01.mjs` are verified on physical devices.
 - `terncy-ws04-d2/d3.mjs` and `terncy-ws10-d1/d3/d4.mjs` are derived from the
   gateway firmware node-struct (endpoint/cluster layout) plus the same private
@@ -53,6 +78,13 @@ docs/
   reverse-engineering vs. verified-converter comparison.
 - `terncy-vg01.mjs` parses indoor-unit report frames only; downlink AC control
   is not sent until the GeneralControl addressing fields are sniffed.
+- `terncy-dim001/dim003/dl002/lb001/mt001.mjs`, `terncy-st01-cv.mjs`,
+  `terncy-cm01/cm07/rm02.mjs`, and `terncy-sl02.mjs` are derived from the
+  gateway firmware node-struct plus disassembly-confirmed command/attribute
+  semantics (see `docs/fingerprints-missing-models.md`). **They have NOT been
+  verified on physical devices — use with caution.** Curtain calibration
+  commands that were not individually disassembled (SetDragging, trip
+  positions, boundary, timeout, startMoving) are intentionally not exposed.
 
 ## Supported Features
 
@@ -139,6 +171,60 @@ Report-only support for the VRV air conditioner gateway on private cluster
   addressing fields and the work-mode/fan-speed enums need one over-the-air
   sniff of a real AC operation first.
 
+### DIM001 / DIM003 / DL002 / LB001 / MT001 (CCT lights)
+
+Tunable white lights driven through the standard OnOff/LevelCtrl/ColorCtrl
+clusters:
+
+- Light on/off, brightness, and `color_temp` via the standard light state.
+- Per-model mired ranges come from the node-struct ColorCtrl attributes
+  0x400B/0x400C: DIM001 100–500, DIM003 142–625, DL002 151–500,
+  LB001 142–625, MT001 142–625.
+- The device-reported `colorCapabilities` is a manufacturer placeholder
+  missing the color-temperature bit, so capability detection is bypassed and
+  `color_temp` is exposed explicitly.
+- Private light tuning (color-temp range page, light curve, mA calibration,
+  power-off memory via `0xfccc` attr 0x19) is not exposed yet.
+
+### TERNCY-ST01-CV (RGB+CCT strip)
+
+Extended color light on standard clusters only (no private clusters):
+
+- Light on/off, brightness, `color_xy`, `color_hs`, and `color_temp`
+  (150–500 mireds).
+
+### TERNCY-CM01 / TERNCY-CM07 / TERNCY-RM02 (curtains)
+
+Curtain motors on the standard WindowCovering cluster plus private `0xfccc`
+configuration:
+
+- `state` OPEN/CLOSE/STOP and `position` (standard commands 0/1/2 and
+  GoToLiftPercentage command 0x05; position reporting via standard
+  CurrentPositionLiftPercentage).
+- `motor_status`, `trip_configured`, `motor_type` (read-only `0xfccc`
+  attrs 0x12/0x14/0x15) and `motor_direction` (`0xfccc` attr 0x11, set via
+  SetDirection command 0x0c which clears saved trip positions, same as the
+  Terncy app).
+- `indicator_led` via ConfigIndicatorLed command 0x16.
+- `delete_all_trip` and `factory_recovery` calibration triggers (commands
+  0x09/0x0a).
+- TERNCY-CM07 additionally exposes `tilt_angle` (-90..90 degrees, sent via
+  GoToTiltValue command 0x07; set-only until a tilt report is sniffed).
+- TERNCY-RM02 is a roller blind controller (earlier notes mislabeled it as
+  a scene remote).
+- If the position direction is wrong on your unit, set the device option
+  `invert_cover: true`.
+
+### TERNCY-SL02 (door lock)
+
+Sleeping end device on the standard DoorLock cluster:
+
+- `state` LOCK/UNLOCK via standard DoorLock commands 1/0.
+- `battery` (PowerCfg batteryPercentageRemaining), `door_state`,
+  `auto_relock_time`, and `sound_volume`.
+- The private `0xfe03` E19 key/keycard table and PIN-code management are not
+  exposed yet.
+
 ## Install Zigbee2MQTT External Converter
 
 Replace `<RAW_BASE_URL>` with this repository's GitHub raw URL.
@@ -177,6 +263,36 @@ curl -L \
 curl -L \
   <RAW_BASE_URL>/zigbee2mqtt/terncy-vg01.mjs \
   -o /config/zigbee2mqtt/external_converters/terncy-vg01.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-dim001.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-dim001.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-dim003.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-dim003.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-dl002.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-dl002.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-lb001.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-lb001.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-mt001.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-mt001.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-st01-cv.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-st01-cv.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-cm01.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-cm01.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-cm07.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-cm07.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-rm02.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-rm02.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-sl02.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-sl02.mjs
 ```
 
 Then add this to Zigbee2MQTT `configuration.yaml` (keep only the converters
@@ -192,6 +308,16 @@ external_converters:
   - terncy-ws10-d3.mjs
   - terncy-ws10-d4.mjs
   - terncy-vg01.mjs
+  - terncy-dim001.mjs
+  - terncy-dim003.mjs
+  - terncy-dl002.mjs
+  - terncy-lb001.mjs
+  - terncy-mt001.mjs
+  - terncy-st01-cv.mjs
+  - terncy-cm01.mjs
+  - terncy-cm07.mjs
+  - terncy-rm02.mjs
+  - terncy-sl02.mjs
 ```
 
 Restart Zigbee2MQTT.

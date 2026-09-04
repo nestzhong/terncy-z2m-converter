@@ -90,14 +90,45 @@ VG01 的 0xFDDD 协议见 `terncy-vg01.mjs` 头注释：上行 0x09 报告帧按
 下行控制（0x01 GeneralControl 子命令 0x31-0x34）因寻址字段与枚举值未经嗅探确认，
 暂不发送。
 
-## 7. 尚未具备指纹数据的设备
+## 7. 原缺失指纹设备 —— 已补齐（2026-09-04 更新）
 
-`XYAN_PROTOCOL_MAP.md` 第 6 节还列出以下设备，但本次逆向提取的
-`node_struct_summary.json` 中没有它们的 endpoint 结构，无法可靠编写指纹，
-待补充 node-struct 后再写转换器：
+此前 `node_struct_summary.json` 仅含 6 个型号（汇总脚本当时只跑了在网型号），
+现已重新全量提取（94 型号），以下设备的 node-struct **全部存在**，指纹可写。
+详见 `docs/fingerprints-missing-models.md`：
 
-- DIM001 / DIM003 / DL002 / LB001 / MT001（CCT 灯，标准簇直出）
-- ST01-CV（RGB+CCT 灯带）
-- CM01 / CM07（窗帘电机，WindowCovering + 0xFCCC 校准命令 9/10/12/17/25/26/27/36/37/40）
-- SL02（门锁，DoorLock + 0xFE03）
-- RM02（场景遥控，仅 client 簇）
+- DIM001 / DIM003 / DL002 / LB001 / MT001（CCT 灯，dev 0x010c，标准簇直出；
+  色温范围来自 ColorCtrl 0x400B/0x400C，逐型号不同；colorCapabilities 为厂商占位值不可信）
+- ST01-CV（RGB+CCT 灯带，dev 0x010d，colorMode=XY，纯标准簇无私有簇）
+- CM01 / CM07 / RM02（窗帘，dev 0x0202；标准 WindowCovering cmd5 百分比/cmd7 tilt；
+  0xFCCC 窗帘属性区 0x11–0x18 已反汇编定名：0x11 方向/0x12 状态/0x14 行程校准/0x15 电机类型/0x18 指示灯；
+  校准走 0xFCCC cmd 9/10/12/17/25/26/27/36/37/40；CM07 支持 tilt）
+- SL02（门锁，dev 0x000a，睡眠设备；DoorLock 标准 + 0xFE03=E19 密钥表，
+  attr8=keyTableLength、attr9=tableState、cmd1=GetKeys）
+- ~~RM02（场景遥控）~~ 更正：RM02 是窗帘控制器（备份实体为柔纱帘/香格里拉帘）；
+  目录中的 `RDM002` 实为 Philips Hue Smart Button（第三方，z2m 已官方支持）
+
+遗留待嗅探（不阻塞）：窗帘私有上报帧 cmd 号（**已解决：0xFCCC cmd 0x26**）、0xFCCC attr 0x13/0x16 语义、
+~~tilt u16 单位~~（已解决：App 滑杆 -90˚~90˚ 角度）、CM01 实机 manufacturerName。
+
+## 8. App 交叉验证（第二轮）—— 全家族通过（2026-09-04）
+
+blutter 反编译 Terncy APK（Dart 2.16.2），提取 146 个设备分类函数、1842 键×4 语言文案、
+8533 函数字符串引用（`/Users/zhonglifeng/Agents/terncy/app_extract/`，
+blutter 原始输出已持久化至 `app_extract/asm/xlive/` 112MB + `app_extract/blutter_meta/`）。
+
+验证结论（明细见 `XYAN_PROTOCOL_MAP.md` §9 与 `fingerprints-missing-models.md` §7-8）：
+- **窗帘**：第一轮已通过（类型/方向/行程/边界/百分比/tilt 逐项吻合）
+- **灯具**：色温范围页↔0xFCCD cmd3、开灯曲线↔cmd5 bezier、额定电流↔cmd5 SetPowerGain、
+  mA 校准↔cmd8+PowerCalibrationFinished、高精度亮度↔cmd39、渐变↔LevelCtrl attr18/19 —— 全部吻合
+- **墙开**：禁用继电器/可编程按键/按键功能/互锁/指示灯 ↔ 0xFCCC attr0x17/0x1C/0x10/0x23/0x18 —— 吻合；
+  命名规则确认（WS01/AU/US、D 有线/S 电池/TM 触摸、路数后缀、WS06/11 带 PIR）
+- **传感器**：保持时间↔attr0x2B、灵敏度↔attr0x2E、PP02 双路方向↔attr0x32/33、
+  PS01 感应距离↔0xFCD1 attr1 —— 吻合
+- **门锁**：6 位授权码↔标准 DoorLock PIN 命令（固件符号确认 Set/Get/ClearPINCode）、
+  自动上锁↔SL01/02/03、E19 钥匙表↔0xFE03 —— 吻合（SL03 新型号确认）
+- **插座**：功率↔ElectricalMeasurement 0x0304、上电恢复↔attr0x19 —— 吻合
+- **新发现家族**：HV01/HV02 地暖阀（0xFCCF，3 路）、AC01 温控面板（标准 Thermostat+0xFCCF）、
+  TV01 影音、CFL001 风扇灯 —— 语义待嗅探，本轮不写转换器
+
+对转换器的影响：原 §7 五款缺失灯 + 窗帘 + 门锁的转换器方案**无需修改**，仅追加可选
+exposes（色温范围/曲线/电流/校准/断电记忆）；新增家族按 `XYAN_PROTOCOL_MAP.md` §6 扩展表实施。

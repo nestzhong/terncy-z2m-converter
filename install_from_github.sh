@@ -11,7 +11,7 @@ fi
 mkdir -p /config/zigbee2mqtt/external_converters
 mkdir -p /config/blueprints/automation/terncy
 
-CONVERTERS="terncy-ws07-d3 terncy-sp01 terncy-ws04-d2 terncy-ws04-d3 terncy-ws10-d1 terncy-ws10-d3 terncy-ws10-d4 terncy-vg01"
+CONVERTERS="terncy-ws07-d3 terncy-sp01 terncy-ws04-d2 terncy-ws04-d3 terncy-ws10-d1 terncy-ws10-d3 terncy-ws10-d4 terncy-vg01 terncy-dim001 terncy-dim003 terncy-dl002 terncy-lb001 terncy-mt001 terncy-st01-cv terncy-cm01 terncy-cm07 terncy-rm02 terncy-sl02"
 
 for NAME in $CONVERTERS; do
     curl -L \
