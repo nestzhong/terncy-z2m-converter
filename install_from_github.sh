@@ -11,21 +11,23 @@ fi
 mkdir -p /config/zigbee2mqtt/external_converters
 mkdir -p /config/blueprints/automation/terncy
 
-curl -L \
-    "$RAW_BASE_URL/zigbee2mqtt/terncy-ws07-d3.mjs" \
-    -o /config/zigbee2mqtt/external_converters/terncy-ws07-d3.mjs
+CONVERTERS="terncy-ws07-d3 terncy-sp01 terncy-ws04-d2 terncy-ws04-d3 terncy-ws10-d1 terncy-ws10-d3 terncy-ws10-d4 terncy-vg01"
 
-curl -L \
-    "$RAW_BASE_URL/zigbee2mqtt/terncy-sp01.mjs" \
-    -o /config/zigbee2mqtt/external_converters/terncy-sp01.mjs
+for NAME in $CONVERTERS; do
+    curl -L \
+        "$RAW_BASE_URL/zigbee2mqtt/$NAME.mjs" \
+        -o "/config/zigbee2mqtt/external_converters/$NAME.mjs"
+done
 
 curl -L \
     "$RAW_BASE_URL/homeassistant/blueprints/automation/terncy/ws07_d3_action_events.yaml" \
     -o /config/blueprints/automation/terncy/ws07_d3_action_events.yaml
 
 echo "Installed converter and blueprint."
-echo "Make sure Zigbee2MQTT configuration.yaml contains:"
+echo "Make sure Zigbee2MQTT configuration.yaml contains (keep only the"
+echo "converters for devices you actually own):"
 echo "external_converters:"
-echo "  - terncy-ws07-d3.mjs"
-echo "  - terncy-sp01.mjs"
+for NAME in $CONVERTERS; do
+    echo "  - $NAME.mjs"
+done
 echo "Then restart Zigbee2MQTT."

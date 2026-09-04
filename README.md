@@ -11,6 +11,25 @@ zigbee2mqtt/terncy-ws07-d3.mjs
 zigbee2mqtt/terncy-sp01.mjs
   Zigbee2MQTT external converter for the TERNCY-SP01 smart plug.
 
+zigbee2mqtt/terncy-ws04-d2.mjs
+  Zigbee2MQTT external converter for the TERNCY-WS04-D2 2-gang wall switch.
+
+zigbee2mqtt/terncy-ws04-d3.mjs
+  Zigbee2MQTT external converter for the TERNCY-WS04-D3 3-gang wall switch.
+
+zigbee2mqtt/terncy-ws10-d1.mjs
+  Zigbee2MQTT external converter for the TERNCY-WS10-D1 1-gang wall switch.
+
+zigbee2mqtt/terncy-ws10-d3.mjs
+  Zigbee2MQTT external converter for the TERNCY-WS10-D3 3-gang wall switch.
+
+zigbee2mqtt/terncy-ws10-d4.mjs
+  Zigbee2MQTT external converter for the TERNCY-WS10-D4 4-gang wall switch.
+
+zigbee2mqtt/terncy-vg01.mjs
+  Zigbee2MQTT external converter for the TERNCY-VG01 VRV air conditioner
+  gateway (report-only, see docs/protocol-comparison.md section 6).
+
 homeassistant/blueprints/automation/terncy/ws07_d3_action_events.yaml
   Main Home Assistant blueprint for 1-7 clicks and long press automation.
 
@@ -21,8 +40,19 @@ homeassistant/packages/ws07_d3_helpers.yaml
   Optional Chinese Home Assistant helper package.
 
 docs/
-  Test notes and feature mapping.
+  Test notes, feature mapping, and the reverse-engineered protocol comparison.
 ```
+
+## Verification Status
+
+- `terncy-ws07-d3.mjs` and `terncy-sp01.mjs` are verified on physical devices.
+- `terncy-ws04-d2/d3.mjs` and `terncy-ws10-d1/d3/d4.mjs` are derived from the
+  gateway firmware node-struct (endpoint/cluster layout) plus the same private
+  cluster protocol verified on the WS07-D3. They have not yet been re-verified
+  on physical devices; see `docs/protocol-comparison.md` for the full
+  reverse-engineering vs. verified-converter comparison.
+- `terncy-vg01.mjs` parses indoor-unit report frames only; downlink AC control
+  is not sent until the GeneralControl addressing fields are sniffed.
 
 ## Supported Features
 
@@ -62,6 +92,53 @@ state. Xiaoyan private power calibration commands are intentionally not exposed.
 For manual loading and troubleshooting, see
 [`docs/sp01-zigbee2mqtt-manual-load-guide.md`](docs/sp01-zigbee2mqtt-manual-load-guide.md).
 
+### TERNCY-WS04-D2 / TERNCY-WS04-D3
+
+Same feature set as the WS07-D3, for 2-gang (endpoints 1-2) and 3-gang
+(endpoints 1-3) wall switches:
+
+- Per-gang relay on/off via `genOnOff`.
+- Per-gang `operation_mode` / `relay_enabled` / `relay_constant_power`.
+- Per-gang `wireless_led_status` and `led_feedback_mode`.
+- Wireless button actions (`single`...`7_click`, `hold`, `release`,
+  `action_duration`) per endpoint.
+
+Endpoint layout comes from the gateway node-struct: every endpoint carries an
+OnOff server cluster plus the private `0xfccc` cluster.
+
+### TERNCY-WS10-D1 / D3 / D4
+
+Same feature set as the WS07-D3. The node-struct shows the relay (OnOff
+server) endpoints differ per model:
+
+| Model | Relay endpoints | 0xfccc-only endpoints |
+| --- | --- | --- |
+| WS10-D1 | 4 | 1, 2, 3 |
+| WS10-D3 | 1, 2, 4 | 3 |
+| WS10-D4 | 1, 2, 3, 4 | — |
+
+Switches and per-gang configuration are exposed only for relay endpoints;
+action decoding covers all endpoints because wireless button frames can arrive
+from any endpoint. The WS10 family also lists 0xfccc attrs 0x22
+(`numberOfTimeoutControls`) and 0x28 (`turnOffDelayMs`); these stay unexposed
+until their App-level meaning is verified.
+
+### TERNCY-VG01
+
+Report-only support for the VRV air conditioner gateway on private cluster
+`0xfddd`:
+
+- Parses uplink command `0x09` (UpdateZhhUnit) frames into per-unit state
+  keys: `unit_<addr>_online`, `unit_<addr>_running`,
+  `unit_<addr>_target_temperature`, `unit_<addr>_local_temperature`,
+  `unit_<addr>_fan_speed`, `unit_<addr>_work_mode`, `unit_<addr>_error_code`.
+  `<addr>` is the two-byte unit address (high byte = group, low byte = unit
+  number) encoded as hex, e.g. `unit_0101_running`.
+- Downlink control (command `0x01` GeneralControl, sub-commands `0x31`-`0x34`)
+  is reconstructed from firmware but intentionally not sent yet: the unit
+  addressing fields and the work-mode/fan-speed enums need one over-the-air
+  sniff of a real AC operation first.
+
 ## Install Zigbee2MQTT External Converter
 
 Replace `<RAW_BASE_URL>` with this repository's GitHub raw URL.
@@ -82,14 +159,39 @@ curl -L \
 curl -L \
   <RAW_BASE_URL>/zigbee2mqtt/terncy-sp01.mjs \
   -o /config/zigbee2mqtt/external_converters/terncy-sp01.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-ws04-d2.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-ws04-d2.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-ws04-d3.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-ws04-d3.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-ws10-d1.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-ws10-d1.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-ws10-d3.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-ws10-d3.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-ws10-d4.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-ws10-d4.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-vg01.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-vg01.mjs
 ```
 
-Then add this to Zigbee2MQTT `configuration.yaml`:
+Then add this to Zigbee2MQTT `configuration.yaml` (keep only the converters
+for devices you actually own):
 
 ```yaml
 external_converters:
   - terncy-ws07-d3.mjs
   - terncy-sp01.mjs
+  - terncy-ws04-d2.mjs
+  - terncy-ws04-d3.mjs
+  - terncy-ws10-d1.mjs
+  - terncy-ws10-d3.mjs
+  - terncy-ws10-d4.mjs
+  - terncy-vg01.mjs
 ```
 
 Restart Zigbee2MQTT.
