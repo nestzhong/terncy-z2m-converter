@@ -198,22 +198,27 @@ Extended color light on standard clusters only (no private clusters):
 Curtain motors on the standard WindowCovering cluster plus private `0xfccc`
 configuration:
 
-- `state` OPEN/CLOSE/STOP and `position` (standard commands 0/1/2 and
-  GoToLiftPercentage command 0x05; position reporting via standard
-  CurrentPositionLiftPercentage).
+- `state` OPEN/CLOSE/STOP and `position`. CM01 is capture-verified: the
+  Terncy app drives it with GoToLiftPercentage (command 0x05) using a
+  percent-open payload (0 = closed, 100 = open), and the converter mirrors
+  that convention (no `invert_cover` needed or supported for CM01).
+  Movement and position updates arrive via the private `0xfccc` motor report
+  command 0x26 (`motor_state`: stopped/opening/closing, plus `position`);
+  the standard CurrentPositionLiftPercentage attribute is honored too.
 - `motor_status`, `trip_configured`, `motor_type` (read-only `0xfccc`
   attrs 0x12/0x14/0x15) and `motor_direction` (`0xfccc` attr 0x11, set via
   SetDirection command 0x0c which clears saved trip positions, same as the
   Terncy app).
 - `indicator_led` via ConfigIndicatorLed command 0x16.
 - `delete_all_trip` and `factory_recovery` calibration triggers (commands
-  0x09/0x0a).
+  0x09/0x0a). App trip calibration flow: DeleteAllTrip, then DownClose and
+  UpOpen to re-learn the end stops.
 - TERNCY-CM07 additionally exposes `tilt_angle` (-90..90 degrees, sent via
   GoToTiltValue command 0x07; set-only until a tilt report is sniffed).
 - TERNCY-RM02 is a roller blind controller (earlier notes mislabeled it as
   a scene remote).
-- If the position direction is wrong on your unit, set the device option
-  `invert_cover: true`.
+- CM07/RM02: if the position direction is wrong on your unit, set the
+  device option `invert_cover: true`.
 
 ### TERNCY-SL02 (door lock)
 

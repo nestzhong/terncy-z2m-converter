@@ -107,7 +107,9 @@ VG01 的 0xFDDD 协议见 `terncy-vg01.mjs` 头注释：上行 0x09 报告帧按
 - ~~RM02（场景遥控）~~ 更正：RM02 是窗帘控制器（备份实体为柔纱帘/香格里拉帘）；
   目录中的 `RDM002` 实为 Philips Hue Smart Button（第三方，z2m 已官方支持）
 
-遗留待嗅探（不阻塞）：窗帘私有上报帧 cmd 号（**已解决：0xFCCC cmd 0x26**）、0xFCCC attr 0x13/0x16 语义、
+遗留待嗅探（不阻塞）：窗帘私有上报帧 cmd 号（**已解决：0xFCCC cmd 0x26，2026-09-05 抓包确认载荷
+= [motorStatus(u8): 0=停/1=开中/2=关中, currentPosition(u8): 开%，未校准时=255]；同批抓包确认
+App 用 WC cmd5 百分比（0=关 100=开）驱动、attr8 同为开%语义**）、0xFCCC attr 0x13/0x16 语义、
 ~~tilt u16 单位~~（已解决：App 滑杆 -90˚~90˚ 角度）、CM01 实机 manufacturerName。
 
 ## 8. App 交叉验证（第二轮）—— 全家族通过（2026-09-04）
