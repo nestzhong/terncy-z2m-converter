@@ -134,3 +134,30 @@ blutter 原始输出已持久化至 `app_extract/asm/xlive/` 112MB + `app_extrac
 
 对转换器的影响：原 §7 五款缺失灯 + 窗帘 + 门锁的转换器方案**无需修改**，仅追加可选
 exposes（色温范围/曲线/电流/校准/断电记忆）；新增家族按 `XYAN_PROTOCOL_MAP.md` §6 扩展表实施。
+
+## 9. RM02 抓包实锤与转换器对齐（2026-09-05 更新）
+
+在 GW2 对 TERNCY-RM02（IEEE dc:8e:95:ff:fe:83:56:97，短地址 0xc026）完成 6 轮抓包：
+开 / 关 / 停止 / 位置设定 / 窗帘方向 / 行程校准（完整 4 步：进校准 → 上键到全开并确认 →
+下键到全关并确认 → 结束），与已实锤的 CM01 交叉核对：
+
+- **正常控制与 CM01 完全一致**：开/关/定位 = 标准 WindowCovering `GoToLiftPercentage`
+  (0x05) 单字节 **开% 载荷**（0=全关、100=全开，实测 0x00/0x64/0x51/0x45/0x5b 等）；
+  停止 = 标准 `Stop`；运动/位置推送 = 私有 0xfccc cmd **0x26**（载荷
+  `[motorStatus, currentPosition]`，0=停/1=开中/2=关中，开%，未校准=255），attr 8 同为开% 语义。
+- **方向**：0xfccc cmd 0x0c `SetDirection`，载荷 0=正向/1=反向；设备回带 mfg Default Response，
+  随后主动上报 attr 8 翻转（100↔0），与 CM01 一致。
+- **行程校准与 CM01 不同（重要）**：
+  - CM01 校准 = `DeleteAllTrip`(cmd 0x09) → WC DownClose → WC UpOpen；
+  - RM02 校准**全程不用 cmd 0x09，也不用 WC UpOpen/DownClose**，而是私有点动限位流程：
+    `ConfigBoundary`(cmd 0x24, 载荷 u8,u8，实测 0x0000→0x0001 开场、0x0100 上端确认、
+    0x0101 下端确认/收尾) + `TimeoutControl`(cmd 0x25, 载荷 [方向 u8, 时长 u16LE]，
+    实测开=0x008813/5000ms、关=0x018813/5000ms 及 800ms 微调) 反复点动，
+    电机上行/下行期间持续上报 status 1/2 + pos 255；到位后 WC Stop；
+    收尾 ConfigBoundary 0x0101 后设备推 attr 0x14 tripConfigured 0→1 并带最终位置。
+  - 因该流程需人在卷帘旁目视限位，z2m 转换器**不暴露** 0x24/0x25；
+    迁移 RM02 前先在 Terncy App 完成校准（或迁移后经 App 校准，再让 z2m 重新面试）。
+- **转换器对齐**：`terncy-rm02.mjs` 已按 CM01 实锤方案重写 —— 本地 cover 转换器走开% 语义
+  （`goToLiftPercentage` 直发 + attr8 原样 + cmd 0x26 MotorReport 解析），**不再依赖标准
+  cover 与 `invert_cover`**（旧注释中的 invert_cover 指引已删除，因其会错误对调方向语义）。
+  属性区/命令区（cmd 0x09/0x0a/0x0c/0x16 + attr 0x11/0x12/0x14/0x15/0x18）与 CM01 保持一致。

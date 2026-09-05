@@ -61,16 +61,18 @@ docs/
 
 ## Verification Status
 
-> **WARNING:** Only `terncy-ws07-d3.mjs` and `terncy-sp01.mjs` have been
-> verified on physical devices. Every other converter in this repository is
-> derived from gateway firmware reverse engineering (node-struct, disassembly,
-> and App cross-validation) and has **NOT** been tested on real hardware.
+> **WARNING:** Only `terncy-ws07-d3.mjs`, `terncy-sp01.mjs`,
+> `terncy-cm01.mjs` and `terncy-rm02.mjs` have been verified on physical
+> devices. Every other converter in this repository is derived from gateway
+> firmware reverse engineering (node-struct, disassembly, and App
+> cross-validation) and has **NOT** been tested on real hardware.
 > They may not work, or could misbehave (for example, inverted curtain
 > positions or unconfirmed payload byte order). **Use them at your own
 > risk**, and please report your findings so they can be corrected and marked
 > as verified.
 
-- `terncy-ws07-d3.mjs` and `terncy-sp01.mjs` are verified on physical devices.
+- `terncy-ws07-d3.mjs`, `terncy-sp01.mjs`, `terncy-cm01.mjs` and
+  `terncy-rm02.mjs` are verified on physical devices.
 - `terncy-ws04-d2/d3.mjs` and `terncy-ws10-d1/d3/d4.mjs` are derived from the
   gateway firmware node-struct (endpoint/cluster layout) plus the same private
   cluster protocol verified on the WS07-D3. They have not yet been re-verified
@@ -78,13 +80,17 @@ docs/
   reverse-engineering vs. verified-converter comparison.
 - `terncy-vg01.mjs` parses indoor-unit report frames only; downlink AC control
   is not sent until the GeneralControl addressing fields are sniffed.
-- `terncy-dim001/dim003/dl002/lb001/mt001.mjs`, `terncy-st01-cv.mjs`,
-  `terncy-cm01/cm07/rm02.mjs`, and `terncy-sl02.mjs` are derived from the
-  gateway firmware node-struct plus disassembly-confirmed command/attribute
-  semantics (see `docs/fingerprints-missing-models.md`). **They have NOT been
-  verified on physical devices — use with caution.** Curtain calibration
-  commands that were not individually disassembled (SetDragging, trip
-  positions, boundary, timeout, startMoving) are intentionally not exposed.
+- `terncy-cm07.mjs` is still the static-reverse-engineering version (standard
+  cover + `invert_cover` fallback + tilt), **not yet capture-verified**. The
+  CM01/RM02 captures strongly suggest CM07 shares the same percent-open lift
+  semantics; it will be rewritten like the RM02 once its own capture is taken.
+- `terncy-dim001/dim003/dl002/lb001/mt001.mjs`, `terncy-st01-cv.mjs`, and
+  `terncy-sl02.mjs` are derived from the gateway firmware node-struct plus
+  disassembly-confirmed command/attribute semantics (see
+  `docs/fingerprints-missing-models.md`). **They have NOT been verified on
+  physical devices — use with caution.** Curtain calibration commands that
+  were not individually disassembled (SetDragging, trip positions, boundary,
+  timeout, startMoving) are intentionally not exposed.
 
 ## Supported Features
 
@@ -198,27 +204,33 @@ Extended color light on standard clusters only (no private clusters):
 Curtain motors on the standard WindowCovering cluster plus private `0xfccc`
 configuration:
 
-- `state` OPEN/CLOSE/STOP and `position`. CM01 is capture-verified: the
-  Terncy app drives it with GoToLiftPercentage (command 0x05) using a
-  percent-open payload (0 = closed, 100 = open), and the converter mirrors
-  that convention (no `invert_cover` needed or supported for CM01).
-  Movement and position updates arrive via the private `0xfccc` motor report
-  command 0x26 (`motor_state`: stopped/opening/closing, plus `position`);
-  the standard CurrentPositionLiftPercentage attribute is honored too.
+- `state` OPEN/CLOSE/STOP and `position`. CM01 and RM02 are
+  capture-verified: the Terncy app drives both with GoToLiftPercentage
+  (command 0x05) using a percent-open payload (0 = closed, 100 = open), and
+  the converters mirror that convention (no `invert_cover` needed or
+  supported). Movement and position updates arrive via the private `0xfccc`
+  motor report command 0x26 (`motor_state`: stopped/opening/closing, plus
+  `position`); the standard CurrentPositionLiftPercentage attribute is
+  honored too.
 - `motor_status`, `trip_configured`, `motor_type` (read-only `0xfccc`
   attrs 0x12/0x14/0x15) and `motor_direction` (`0xfccc` attr 0x11, set via
   SetDirection command 0x0c which clears saved trip positions, same as the
   Terncy app).
 - `indicator_led` via ConfigIndicatorLed command 0x16.
 - `delete_all_trip` and `factory_recovery` calibration triggers (commands
-  0x09/0x0a). App trip calibration flow: DeleteAllTrip, then DownClose and
-  UpOpen to re-learn the end stops.
+  0x09/0x0a).
 - TERNCY-CM07 additionally exposes `tilt_angle` (-90..90 degrees, sent via
   GoToTiltValue command 0x07; set-only until a tilt report is sniffed).
-- TERNCY-RM02 is a roller blind controller (earlier notes mislabeled it as
-  a scene remote).
-- CM07/RM02: if the position direction is wrong on your unit, set the
-  device option `invert_cover: true`.
+- TERNCY-RM02 is a roller blind controller (earlier notes mislabeled it as a
+  scene remote).
+- Trip calibration differs between the motors: **CM01** re-learns its end
+  stops with DeleteAllTrip, then WindowCovering DownClose and UpOpen.
+  **RM02** never uses DeleteAllTrip/UpOpen/DownClose on air — its app instead
+  jogs the blind to each physical limit with the private commands `0xfccc`
+  cmd 36 (ConfigBoundary) and cmd 37 (TimeoutControl, dir + duration ms) and
+  confirms each end. That flow needs physical eyes on the blind, so it is not
+  exposed in this converter — calibrate RM02 units before migrating them to
+  z2m (or via the Terncy app) and only then pair them to z2m.
 
 ### TERNCY-SL02 (door lock)
 
