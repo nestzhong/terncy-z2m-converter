@@ -48,6 +48,16 @@
 //   22 ConfigIndicatorLed (no manufacturer code). Not exposed yet:
 //   17 SetDragging, 25/27 trip positions, 36 boundary, 37 timeout control,
 //   40 startMoving.
+//
+// Trip calibration (exposed as `trip_calibration`): the app just writes a
+// logic attribute and the gateway's AdjustTripTask runs the zigbee sequence
+//   DeleteAllTrip -> DownClose -> UpOpen,
+// advancing between legs as soon as the motor reports stopped (motor reaches
+// its physical end and auto-stops). This converter reproduces that flow
+// directly: each leg is followed by polling the 0xfccc curtainMotorStatus
+// attribute until 0 (stopped) before sending the next command, so it works
+// for any curtain length without a configurable travel time (verified on-air
+// 2026-09-05: closed leg ~10s, open leg ~10s).
 
 import * as fz from "zigbee-herdsman-converters/converters/fromZigbee";
 import * as tz from "zigbee-herdsman-converters/converters/toZigbee";
@@ -68,6 +78,56 @@ const READABLE_ATTRIBUTES = {
 };
 
 const MOTOR_STATE_LOOKUP = {0: "stopped", 1: "opening", 2: "closing"};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const CALIBRATION_LEG_TIMEOUT_MS = 90000;
+
+async function readMotorStatus(entity) {
+    try {
+        const result = await entity.read(
+            "manuSpecificClusterAduroSmart",
+            ["curtainMotorStatus"],
+            {manufacturerCode: XIAOYAN_MANUFACTURER_CODE},
+        );
+        if (result !== undefined && result.curtainMotorStatus !== undefined) {
+            return result.curtainMotorStatus;
+        }
+        if (result !== undefined && result[0x12] !== undefined) {
+            return result[0x12];
+        }
+    } catch (error) {
+        // transient read failure: keep polling
+    }
+    return undefined;
+}
+
+// Wait up to `timeoutMs` for the motor to report `status` at least once.
+// Used to confirm the motor actually started a calibration leg (guards
+// against mistaking the pre-move idle `stopped` value for the leg having
+// finished). Returns true when the status was observed.
+async function waitForMotorStatus(entity, status, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if ((await readMotorStatus(entity)) === status) {
+            return true;
+        }
+        await sleep(400);
+    }
+    return false;
+}
+
+// Poll curtainMotorStatus until the motor reports stopped (0), mirroring how
+// the gateway AdjustTripTask advances to the next calibration leg.
+async function waitMotorStopped(entity, label) {
+    const deadline = Date.now() + CALIBRATION_LEG_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+        if ((await readMotorStatus(entity)) === 0) {
+            return;
+        }
+        await sleep(400);
+    }
+    throw new Error(`TERNCY-CM01: motor did not stop during ${label}, trip calibration aborted`);
+}
 
 const fzLocal = {
     // Device reports CurrentPositionLiftPercentage as percent OPEN
@@ -204,6 +264,40 @@ const tzLocal = {
             );
         },
     },
+    // One-shot trip calibration. Reproduces the sequence the Terncy app
+    // triggers (App writes attr 0x13=2; gateway AdjustTripTask then runs
+    // DeleteAllTrip -> DownClose -> UpOpen). The motor auto-stops at each
+    // physical end; we poll curtainMotorStatus and only send the next leg
+    // once it reports stopped, exactly like the gateway does.
+    terncyCurtainTripCalibration: {
+        key: ["trip_calibration"],
+        convertSet: async (entity, key, value, meta) => {
+            await entity.command(
+                "manuSpecificClusterAduroSmart",
+                "deleteAllTrip",
+                {},
+                {manufacturerCode: XIAOYAN_MANUFACTURER_CODE, disableDefaultResponse: false},
+            );
+            // Give the device a moment to clear its trips (it reports
+            // tripConfigured=0 and position 255 during calibration).
+            await sleep(500);
+
+            // Leg 1: run down to the closed end and auto-stop.
+            await entity.command("closuresWindowCovering", "downClose", {}, {disableDefaultResponse: false});
+            const closing = await waitForMotorStatus(entity, 2, 6000);
+            if (closing) {
+                await waitMotorStopped(entity, "closing leg");
+            }
+
+            // Leg 2: run up to the open end; reaching it stores the trips
+            // (device reports tripConfigured=1 and position 100).
+            await entity.command("closuresWindowCovering", "upOpen", {}, {disableDefaultResponse: false});
+            const opening = await waitForMotorStatus(entity, 1, 6000);
+            if (opening) {
+                await waitMotorStopped(entity, "opening leg");
+            }
+        },
+    },
     terncyCurtainFactoryRecovery: {
         key: ["factory_recovery"],
         convertSet: async (entity, key, value, meta) => {
@@ -273,6 +367,7 @@ export default {
         tzLocal.terncyCurtainMotorDirection,
         tzLocal.terncyCurtainReadableAttributes,
         tzLocal.terncyCurtainDeleteAllTrip,
+        tzLocal.terncyCurtainTripCalibration,
         tzLocal.terncyCurtainFactoryRecovery,
         tzLocal.terncyCurtainIndicatorLed,
     ],
@@ -293,6 +388,10 @@ export default {
             .withDescription("Motor type as configured in the Terncy app (raw value)"),
         exposes.binary("delete_all_trip", ea.SET, "ON", "OFF")
             .withDescription("Delete all saved trip positions").withCategory("config"),
+        exposes.enum("trip_calibration", ea.SET, ["start"])
+            .withDescription("Calibrate the trip positions: the motor runs to the closed end and then to the open end " +
+                "on its own (about 20-40 s depending on the curtain); it reports 'trip_configured' when finished")
+            .withCategory("config"),
         exposes.binary("factory_recovery", ea.SET, "ON", "OFF")
             .withDescription("Factory-recover the curtain controller").withCategory("config"),
         exposes.enum("indicator_led", ea.STATE_SET, ["off", "on"])
