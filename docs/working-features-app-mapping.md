@@ -28,8 +28,8 @@ as complete.
 | `relay_enabled_l1/l2/l3 = ON` | Enable relay / return to normal relay control | Return the gang to normal relay-control mode | Same as `operation_mode=control_relay`: private command `0x1d`, payload `0` | Converter corrected to this mapping. Do not use command `0x13` as the main "normal mode" path |
 | `relay_constant_power_l1/l2/l3 = ON` | Keep load powered while using wireless switch mode | Turn relay/load on, then detach physical button from relay control | `genOnOff.on()` followed by private command `0x1d`, payload `1` | Working after converter fix. Re-tested on l1 at 09:56: device reported `onOff:1`, then `0x1d` returned status `0`; no delayed `onOff:0` was observed in the follow-up window |
 | `relay_constant_power_l1/l2/l3 = OFF` | Leave constant-power mode / return relay control | Return gang to normal relay-control mode | Private command `0x1d`, payload `0` | Implemented using verified normal-mode path. It does not force `genOnOff.off()` |
-| `wireless_led_status_l1/l2/l3 = on/off` | Button LED state in wireless mode | Directly set the button LED status while the gang is in wireless/pure-input mode | Private command `0x1f` / `setButtonLedStatus`, payload `1` for `on`, `0` for `off` | Working only in wireless mode. Endpoint 1 returned default response status `0` for both payloads in wireless mode |
-| `led_feedback_mode_l1/l2/l3 = positive/negative` | Relay-mode LED feedback polarity | Configure how button LED maps to relay/on-off state | Write Attributes to private attr `0x001f` / `cfgButtonLedPolarity`, uint8, source endpoint `110`; `positive -> 0`, `negative -> 1` | Working. User visual check: `negative/1` means relay/light off -> indicator off; `positive/0` means relay/light off -> indicator on |
+| `wireless_led_status_l1/l2/l3 = on/off` | Button LED state in wireless mode | Directly set the button LED status while the gang is in wireless/pure-input mode | Private command `0x1f` / `setButtonLedStatus`, payload `1` for `on`, `0` for `off` | Works only in wireless mode. Command returns default response status `0` for both payloads. **On WS10-D1 the command is accepted but the always-on panel LED does not change — see "WS10 LED findings" below.** |
+| `led_feedback_mode_l1/l2/l3 = positive/negative` | Relay-mode LED feedback polarity | Configure how button LED maps to relay/on-off state | Write Attributes to private attr `0x001f` / `cfgButtonLedPolarity`, uint8, source endpoint `110`; `positive -> 0`, `negative -> 1` | Verified on WS07-D3 (user visual check: `negative/1` = relay/light off -> indicator off). **WS10-D1 rejects the write with `NOT_AUTHORIZED`.** |
 
 ## Important Behavior Notes
 
@@ -75,6 +75,32 @@ command 0x1f is rejected in control_relay mode with status 0x87
 
 Therefore `wireless_led_status` should stay separate from relay-mode LED
 feedback polarity.
+
+### WS10 LED findings (2026-11-21)
+
+Tested on a physically installed `TERNCY-WS10-D1` (4-button panel, one relay on
+endpoint 4) with all gangs in `wireless` + `relay_constant_power = ON`. The
+panel's four always-on button LEDs did **not** respond to any of the known LED
+paths:
+
+| Path | Command / attribute | Result |
+| --- | --- | --- |
+| `wireless_led_status_l1..l4 = off` | private command `0x1f` | Accepted, default response status `0`, LED unchanged |
+| `indicator_led = OFF` | private command `0x16` / `configIndicatorLed` | Accepted, no visible change |
+| `led_feedback_mode_l4 = negative` | write attr `0x001f` / `cfgButtonLedPolarity` | Rejected: `NOT_AUTHORIZED`, attribute not writable |
+| `button_led_status = OFF` | write attr `0x0020` / `cfgButtonLedStatus` | Rejected: `NOT_AUTHORIZED`, attribute not writable |
+
+Conclusion: on this WS10-D1 firmware the always-on button LED is not controllable
+through the `0x1f` / `0x16` / `0x001f` / `0x0020` interfaces. The `0xfccc`
+attributes `0x001f` and `0x0020` are read-only here, unlike the WS07-D3 firmware.
+
+Note that the generated device page on zigbee2mqtt.io only reflects the
+converter's `exposes`; it is not proof that a feature works on hardware. For
+WS07-D3 the `wireless_led_status` entry was likewise only verified at the
+"command accepted / status 0" level.
+
+As a consequence, LED exposes are intentionally bound to `RELAY_ENDPOINTS`
+only: extending them to every button endpoint adds entities that do nothing.
 
 ## Not Working Yet / Do Not Expose As Complete
 

@@ -168,6 +168,12 @@ from any endpoint. The WS10 family also lists 0xfccc attrs 0x22
 (`numberOfTimeoutControls`) and 0x28 (`turnOffDelayMs`); these stay unexposed
 until their App-level meaning is verified.
 
+> **LED caveat (WS10-D1, tested 2026-11-21):** the always-on button LEDs did
+> not respond to `wireless_led_status` (cmd `0x1f`) or `indicator_led` (cmd
+> `0x16`); attrs `0x001f` and `0x0020` were rejected with `NOT_AUTHORIZED`.
+> The LED exposes are kept for protocol completeness only. See
+> `docs/working-features-app-mapping.md` → "WS10 LED findings".
+
 ### TERNCY-VG01
 
 Report-only support for the VRV air conditioner gateway on private cluster
