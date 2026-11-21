@@ -11,6 +11,9 @@ zigbee2mqtt/terncy-ws07-d3.mjs
 zigbee2mqtt/terncy-sp01.mjs
   Zigbee2MQTT external converter for the TERNCY-SP01 smart plug.
 
+zigbee2mqtt/terncy-ws04-d1.mjs
+  Zigbee2MQTT external converter for the TERNCY-WS04-D1 1-gang wall switch.
+
 zigbee2mqtt/terncy-ws04-d2.mjs
   Zigbee2MQTT external converter for the TERNCY-WS04-D2 2-gang wall switch.
 
@@ -73,7 +76,7 @@ docs/
 
 - `terncy-ws07-d3.mjs`, `terncy-sp01.mjs`, `terncy-cm01.mjs` and
   `terncy-rm02.mjs` are verified on physical devices.
-- `terncy-ws04-d2/d3.mjs` and `terncy-ws10-d1/d3/d4.mjs` are derived from the
+- `terncy-ws04-d1/d2/d3.mjs` and `terncy-ws10-d1/d3/d4.mjs` are derived from the
   gateway firmware node-struct (endpoint/cluster layout) plus the same private
   cluster protocol verified on the WS07-D3. They have not yet been re-verified
   on physical devices; see `docs/protocol-comparison.md` for the full
@@ -89,8 +92,10 @@ docs/
   disassembly-confirmed command/attribute semantics (see
   `docs/fingerprints-missing-models.md`). **They have NOT been verified on
   physical devices — use with caution.** Curtain calibration commands that
-  were not individually disassembled (SetDragging, trip positions, boundary,
-  timeout, startMoving) are intentionally not exposed.
+  were not individually disassembled or verified on air (SetDragging, trip
+  positions, startMoving) are intentionally not exposed; the RM02 calibration
+  session commands (ConfigBoundary/TimeoutControl) ARE exposed because they
+  were verified on air.
 
 ## Supported Features
 
@@ -130,10 +135,10 @@ state. Xiaoyan private power calibration commands are intentionally not exposed.
 For manual loading and troubleshooting, see
 [`docs/sp01-zigbee2mqtt-manual-load-guide.md`](docs/sp01-zigbee2mqtt-manual-load-guide.md).
 
-### TERNCY-WS04-D2 / TERNCY-WS04-D3
+### TERNCY-WS04-D1 / TERNCY-WS04-D2 / TERNCY-WS04-D3
 
-Same feature set as the WS07-D3, for 2-gang (endpoints 1-2) and 3-gang
-(endpoints 1-3) wall switches:
+Same feature set as the WS07-D3, for 1-gang (endpoint 1), 2-gang (endpoints 1-2)
+and 3-gang (endpoints 1-3) wall switches:
 
 - Per-gang relay on/off via `genOnOff`.
 - Per-gang `operation_mode` / `relay_enabled` / `relay_constant_power`.
@@ -142,7 +147,9 @@ Same feature set as the WS07-D3, for 2-gang (endpoints 1-2) and 3-gang
   `action_duration`) per endpoint.
 
 Endpoint layout comes from the gateway node-struct: every endpoint carries an
-OnOff server cluster plus the private `0xfccc` cluster.
+OnOff server cluster plus the private `0xfccc` cluster. The WS04-D1 endpoint-1
+`0xfccc` attribute defaults are byte-for-byte identical to WS04-D3 endpoint 1,
+so it is the single-gang variant of the same firmware family.
 
 ### TERNCY-WS10-D1 / D3 / D4
 
@@ -224,13 +231,19 @@ configuration:
 - TERNCY-RM02 is a roller blind controller (earlier notes mislabeled it as a
   scene remote).
 - Trip calibration differs between the motors: **CM01** re-learns its end
-  stops with DeleteAllTrip, then WindowCovering DownClose and UpOpen.
-  **RM02** never uses DeleteAllTrip/UpOpen/DownClose on air — its app instead
-  jogs the blind to each physical limit with the private commands `0xfccc`
-  cmd 36 (ConfigBoundary) and cmd 37 (TimeoutControl, dir + duration ms) and
-  confirms each end. That flow needs physical eyes on the blind, so it is not
-  exposed in this converter — calibrate RM02 units before migrating them to
-  z2m (or via the Terncy app) and only then pair them to z2m.
+  stops with DeleteAllTrip, then WindowCovering DownClose and UpOpen (one-shot
+  `trip_calibration = start`). **RM02** never uses DeleteAllTrip/UpOpen/
+  DownClose on air — its app instead jogs the blind to each physical limit
+  with the private commands `0xfccc` cmd 36 (ConfigBoundary) and cmd 37
+  (TimeoutControl, dir + duration ms) and confirms each end. Because that flow
+  needs physical eyes on the blind, RM02 exposes it as a step-by-step
+  `trip_calibration` action enum instead of one auto command:
+  `begin` (motor auto-runs to the close end as a lower reference and stops) →
+  `jog_open` (repeat until the blind is fully open) → cover `stop` →
+  `confirm_open` → `jog_close` (repeat until fully closed) → cover `stop` →
+  `confirm_close` (device then reports `trip_configured` = 1). During a
+  session the normal cover open/close/goToLift are not available; send a
+  `stop` (or another jog) to halt the motor.
 
 ### TERNCY-SL02 (door lock)
 
@@ -262,6 +275,9 @@ curl -L \
 curl -L \
   <RAW_BASE_URL>/zigbee2mqtt/terncy-sp01.mjs \
   -o /config/zigbee2mqtt/external_converters/terncy-sp01.mjs
+curl -L \
+  <RAW_BASE_URL>/zigbee2mqtt/terncy-ws04-d1.mjs \
+  -o /config/zigbee2mqtt/external_converters/terncy-ws04-d1.mjs
 curl -L \
   <RAW_BASE_URL>/zigbee2mqtt/terncy-ws04-d2.mjs \
   -o /config/zigbee2mqtt/external_converters/terncy-ws04-d2.mjs
@@ -319,6 +335,7 @@ for devices you actually own):
 external_converters:
   - terncy-ws07-d3.mjs
   - terncy-sp01.mjs
+  - terncy-ws04-d1.mjs
   - terncy-ws04-d2.mjs
   - terncy-ws04-d3.mjs
   - terncy-ws10-d1.mjs

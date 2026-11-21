@@ -41,26 +41,33 @@
 //
 // Trip calibration DIFFERS FROM THE CM01 (important):
 //   * CM01: app sends DeleteAllTrip (0xfccc cmd 9), then WindowCovering
-//     DownClose and UpOpen to re-learn the end stops.
-//   * RM02: app never sends DeleteAllTrip nor WC UpOpen/DownClose. Instead the
-//     whole calibration session (start -> jog to open limit -> jog to close
-//     limit -> done) runs on the private 0xfccc commands:
+//     DownClose and UpOpen to re-learn the end stops (one-shot, motor
+//     auto-stops at its mechanical ends).
+//   * RM02 (roller blind) has no mechanical end stops it can detect, so the
+//     calibration session is jog-with-confirm and needs eyes on the blind:
 //       - cmd 36 ConfigBoundary   payload [u8,u8]: 0x0000 on session start,
-//         0x0001 after, 0x0100 after the open end is confirmed, 0x0101 after
-//         the close end is confirmed (last one marks the session complete).
+//         0x0001 after the auto lower-reference run, 0x0100 once the OPEN end
+//         is confirmed, 0x0101 once the CLOSE end is confirmed (completes).
 //       - cmd 37 TimeoutControl   payload [dir(u8), durationMs(u16 LE)]:
 //         dir 0 = open (motor reports status 1), dir 1 = close (status 2).
 //         Duration seen on air: 5000 ms (coarse jog), 800 ms (fine jog).
-//         Re-sent every ~4.4 s while the user holds the jog; the device
-//         reports status 1/2 until a WindowCovering Stop arrives.
+//         The gateway re-sends it every ~4.4 s while the user holds the jog;
+//         the device keeps moving (status 1/2) until a WindowCovering Stop
+//         arrives.
 //       - Done is signalled by the device pushing attr 0x14 (tripConfigured)
 //         0 -> 1 together with a MotorReport carrying the final position
 //         (0 = closed when the close end was confirmed last).
-//   * Because this jog-with-confirm flow needs physical eyes on the blind, it
-//     is not exposed here; calibrate RM02 units BEFORE migrating them to z2m
-//     (or factory-reset to the app) — see the readme migration notes.
-//   * delete_all_trip (cmd 9) is still exposed for parity with the CM01: it
-//     clears the stored trip so the controller must be re-calibrated.
+//   * Full on-air sequence (captures/GW2/TERNCY-RM02, 2026-09-05, device
+//     0xc026): ConfigBoundary(0,0) -> motor auto-runs to the close end and
+//     stops -> ConfigBoundary(0,1) -> user jogs open (repeated TimeoutControl
+//     open 5000 ms) -> WC.Stop -> ConfigBoundary(1,0) -> user jogs close
+//     (TimeoutControl close 5000 ms, then fine jog 800 ms) -> WC.Stop ->
+//     ConfigBoundary(1,1) -> attr 0x14 flips 1 and MotorReport pos 0.
+//   * This converter exposes the session as discrete `trip_calibration`
+//     actions (begin/jog_open/jog_close/confirm_open/confirm_close) so it can
+//     be driven from z2m while watching the blind; the normal cover open/
+//     close/goToLift are NOT usable during a session (no trips -> no target
+//     position), so jog_* uses TimeoutControl and WC.Stop stops the motor.
 //
 // Private 0xfccc curtain attribute block (disassembly-confirmed):
 //   0x11 motorDirection, 0x12 motorStatus, 0x14 tripConfigured (report
@@ -69,8 +76,9 @@
 // Private curtain commands (mfg code 0x1228 unless noted):
 //   9 DeleteAllTrip, 10 FactoryRecovery, 12 SetDirection (verified; clears
 //   trip positions, same behavior as the Terncy app), 22 ConfigIndicatorLed
-//   (no manufacturer code). Calibration session commands above (36/37) and
-//   17 SetDragging, 25/26/27 trip positions, 40 startMoving stay unexposed.
+//   (no manufacturer code), 36 ConfigBoundary + 37 TimeoutControl (calibration
+//   session, see above). 17 SetDragging, 25/26/27 trip positions,
+//   40 startMoving stay unexposed.
 
 import * as fz from "zigbee-herdsman-converters/converters/fromZigbee";
 import * as tz from "zigbee-herdsman-converters/converters/toZigbee";
@@ -91,6 +99,59 @@ const READABLE_ATTRIBUTES = {
 };
 
 const MOTOR_STATE_LOOKUP = {0: "stopped", 1: "opening", 2: "closing"};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const CALIBRATION_AUTO_RUN_TIMEOUT_MS = 60000;
+
+async function readMotorStatus(entity) {
+    try {
+        const result = await entity.read(
+            "manuSpecificClusterAduroSmart",
+            ["curtainMotorStatus"],
+            {manufacturerCode: XIAOYAN_MANUFACTURER_CODE},
+        );
+        if (result !== undefined && result.curtainMotorStatus !== undefined) {
+            return result.curtainMotorStatus;
+        }
+        if (result !== undefined && result[0x12] !== undefined) {
+            return result[0x12];
+        }
+    } catch (error) {
+        // transient read failure: keep polling
+    }
+    return undefined;
+}
+
+// Wait up to `timeoutMs` for the motor to report any movement (status != 0)
+// at least once. Guards the auto lower-reference run against misreading the
+// pre-run idle `stopped` as the run having finished. Returns true when the
+// motor was seen moving.
+async function waitForMotorMoving(entity, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const status = await readMotorStatus(entity);
+        if (status !== undefined && status !== 0) {
+            return true;
+        }
+        await sleep(400);
+    }
+    return false;
+}
+
+// Poll the private 0xfccc curtainMotorStatus until the motor reports stopped
+// (0). Used to wait out the auto lower-reference run that ConfigBoundary(0,0)
+// triggers at the start of a calibration session (the run takes a few seconds
+// on air, but can be longer on a tall blind).
+async function waitMotorStopped(entity, label) {
+    const deadline = Date.now() + CALIBRATION_AUTO_RUN_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+        if ((await readMotorStatus(entity)) === 0) {
+            return;
+        }
+        await sleep(400);
+    }
+    throw new Error(`TERNCY-RM02: motor did not stop during ${label}; calibration step aborted`);
+}
 
 const fzLocal = {
     // Device reports CurrentPositionLiftPercentage as percent OPEN
@@ -227,6 +288,54 @@ const tzLocal = {
             );
         },
     },
+    // Roller-blind trip calibration session, driven step by step (see header
+    // comment). Unlike the CM01 there is no one-shot auto calibration: the
+    // blind must be jogged to each physical end and the end confirmed while
+    // watching it, mirroring the Terncy app's calibration page.
+    terncyCurtainTripCalibration: {
+        key: ["trip_calibration"],
+        convertSet: async (entity, key, value, meta) => {
+            const opts = {manufacturerCode: XIAOYAN_MANUFACTURER_CODE, disableDefaultResponse: false};
+            const action = String(value).toLowerCase();
+            switch (action) {
+                case "begin": {
+                    // Enter calibration: clears the stored trips and makes the
+                    // motor auto-run toward the close end as a lower
+                    // reference, then stop on its own. Wait it out before
+                    // moving to the jog phase (ConfigBoundary 0x0001), exactly
+                    // like the gateway does. If the blind is already at the
+                    // close end the run may not happen at all - that is fine.
+                    await entity.command("manuSpecificClusterAduroSmart", "configBoundary", {b0: 0, b1: 0}, opts);
+                    const ran = await waitForMotorMoving(entity, 8000);
+                    if (ran) {
+                        await waitMotorStopped(entity, "auto lower-reference run");
+                    }
+                    await entity.command("manuSpecificClusterAduroSmart", "configBoundary", {b0: 0, b1: 1}, opts);
+                    break;
+                }
+                case "jog_open":
+                    // Run toward the open end for the given window; re-trigger
+                    // to keep going, and send a cover stop when it arrives.
+                    await entity.command("manuSpecificClusterAduroSmart", "timeoutControl", {dir: 0, duration: 5000}, opts);
+                    break;
+                case "jog_close":
+                    await entity.command("manuSpecificClusterAduroSmart", "timeoutControl", {dir: 1, duration: 5000}, opts);
+                    break;
+                case "confirm_open":
+                    // Blind is parked at the fully open end: lock it in.
+                    await entity.command("manuSpecificClusterAduroSmart", "configBoundary", {b0: 1, b1: 0}, opts);
+                    break;
+                case "confirm_close":
+                    // Blind is parked at the fully closed end: lock it in.
+                    // This last step completes the session - the device then
+                    // pushes tripConfigured=1 and the final position.
+                    await entity.command("manuSpecificClusterAduroSmart", "configBoundary", {b0: 1, b1: 1}, opts);
+                    break;
+                default:
+                    // unknown value: ignore, expose list is authoritative
+            }
+        },
+    },
     terncyCurtainFactoryRecovery: {
         key: ["factory_recovery"],
         convertSet: async (entity, key, value, meta) => {
@@ -274,6 +383,27 @@ export default {
                 factoryRecovery: {name: "factoryRecovery", ID: 0x0a, parameters: []},
                 setDirection: {name: "setDirection", ID: 0x0c, parameters: [{name: "direction", type: 0x20}]},
                 configIndicatorLed: {name: "configIndicatorLed", ID: 0x16, parameters: [{name: "enabled", type: 0x10}]},
+                // Calibration session commands (verified on air):
+                // configBoundary flags: (0,0) start, (0,1) after the auto
+                // lower-reference run, (1,0) open end confirmed, (1,1) done.
+                configBoundary: {
+                    name: "configBoundary",
+                    ID: 0x24,
+                    parameters: [
+                        {name: "b0", type: 0x20},
+                        {name: "b1", type: 0x20},
+                    ],
+                },
+                // timeoutControl: dir 0 = open, 1 = close; duration ms (u16).
+                // Motor keeps running until a WindowCovering Stop.
+                timeoutControl: {
+                    name: "timeoutControl",
+                    ID: 0x25,
+                    parameters: [
+                        {name: "dir", type: 0x20},
+                        {name: "duration", type: 0x21},
+                    ],
+                },
             },
             commandsResponse: {
                 // Motor status/position push report (verified on air):
@@ -296,6 +426,7 @@ export default {
         tzLocal.terncyCurtainMotorDirection,
         tzLocal.terncyCurtainReadableAttributes,
         tzLocal.terncyCurtainDeleteAllTrip,
+        tzLocal.terncyCurtainTripCalibration,
         tzLocal.terncyCurtainFactoryRecovery,
         tzLocal.terncyCurtainIndicatorLed,
     ],
@@ -316,6 +447,14 @@ export default {
             .withDescription("Motor type as configured in the Terncy app (raw value)"),
         exposes.binary("delete_all_trip", ea.SET, "ON", "OFF")
             .withDescription("Delete all saved trip positions").withCategory("config"),
+        exposes.enum("trip_calibration", ea.SET,
+            ["begin", "jog_open", "confirm_open", "jog_close", "confirm_close"])
+            .withDescription("Step-by-step roller blind trip calibration - run these in order while watching the blind: " +
+                "1) begin (motor auto-runs to the close end and stops), 2) jog_open until the blind is fully open, then " +
+                "send a cover stop, 3) confirm_open, 4) jog_close until fully closed, then stop, 5) confirm_close " +
+                "(device then reports trip_configured=1). Re-send jog_open/jog_close to keep the motor running; during a " +
+                "session the normal cover open/close/goToLift commands are not available")
+            .withCategory("config"),
         exposes.binary("factory_recovery", ea.SET, "ON", "OFF")
             .withDescription("Factory-recover the curtain controller").withCategory("config"),
         exposes.enum("indicator_led", ea.STATE_SET, ["off", "on"])
