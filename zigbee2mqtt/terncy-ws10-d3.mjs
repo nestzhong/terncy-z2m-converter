@@ -69,8 +69,8 @@ function endpointActions() {
     return Object.keys(ENDPOINTS).flatMap((ep) => baseActions.map((action) => `${action}_${ep}`));
 }
 
-function perRelayConfig(name, values, description) {
-    return Object.keys(RELAY_ENDPOINTS).map((ep) =>
+function perRelayConfig(name, values, description, endpoints = RELAY_ENDPOINTS) {
+    return Object.keys(endpoints).map((ep) =>
         exposes.enum(name, ea.STATE_SET, values).withEndpoint(ep)
             .withDescription(description).withCategory("config"),
     );
@@ -221,7 +221,7 @@ export default {
         ...perRelayConfig("operation_mode", ["control_relay", "wireless"], "Control relay or act as wireless switch"),
         ...perRelayBinary("relay_enabled", "Enable or disable relay while in wireless switch mode"),
         ...perRelayBinary("relay_constant_power", "Turn relay on, then decouple input for constant power"),
-        ...perRelayConfig("wireless_led_status", Object.keys(WIRELESS_LED_STATUS), "LED state while in wireless switch mode"),
+        ...perRelayConfig("wireless_led_status", Object.keys(WIRELESS_LED_STATUS), "LED state while in wireless switch mode", ENDPOINTS),
         ...perRelayConfig("led_feedback_mode", Object.keys(LED_FEEDBACK_MODE), "Relay-mode LED feedback relation"),
         e.action(endpointActions()),
         e.action_duration(),

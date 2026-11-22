@@ -162,17 +162,23 @@ server) endpoints differ per model:
 | WS10-D3 | 1, 2, 4 | 3 |
 | WS10-D4 | 1, 2, 3, 4 | — |
 
-Switches and per-gang configuration are exposed only for relay endpoints;
-action decoding covers all endpoints because wireless button frames can arrive
-from any endpoint. The WS10 family also lists 0xfccc attrs 0x22
+Switches and relay-related configuration (`operation_mode`, `relay_enabled`,
+`relay_constant_power`, `led_feedback_mode`) are exposed only for relay
+endpoints. `wireless_led_status` is exposed for **every** button endpoint,
+because the white feedback LED exists even on gangs without a relay. Action
+decoding covers all endpoints because wireless button frames can arrive from
+any endpoint. The WS10 family also lists 0xfccc attrs 0x22
 (`numberOfTimeoutControls`) and 0x28 (`turnOffDelayMs`); these stay unexposed
 until their App-level meaning is verified.
 
-> **LED caveat (WS10-D1, tested 2026-11-21):** the always-on button LEDs did
-> not respond to `wireless_led_status` (cmd `0x1f`) or `indicator_led` (cmd
-> `0x16`); attrs `0x001f` and `0x0020` were rejected with `NOT_AUTHORIZED`.
-> The LED exposes are kept for protocol completeness only. See
-> `docs/working-features-app-mapping.md` → "WS10 LED findings".
+> **LED behaviour (WS10-D1, verified 2026-11-21):** the button LED is
+> dual-colour. Amber is a hardwired power indicator that cannot be turned off;
+> white is the feedback LED and is fully controlled by `wireless_led_status`
+> (cmd `0x1f`) on every button endpoint. `indicator_led` (cmd `0x16`) had no
+> visible effect, and attrs `0x001f` / `0x0020` reject writes with
+> `NOT_AUTHORIZED` — the app's "LED feedback" setting is implemented
+> gateway-side. See `docs/working-features-app-mapping.md` → "WS10 LED
+> behaviour".
 
 ### TERNCY-VG01
 
